@@ -100,7 +100,7 @@ void Texture2D::upload_pixels(const void *data, VkDeviceSize size, uint32_t widt
     ASSERT(context != nullptr, "VulkanContext is null when uploading texture");
     if (context == nullptr)
     {
-        LOG_ERROR("Cannot upload texture data without an active Vulkan context");
+        LOG_ERROR("Cannot upload texture data without an active Vulkan context", 0);
         return;
     }
 
