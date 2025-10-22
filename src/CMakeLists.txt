@@ -12,8 +12,8 @@ target_include_directories(Vulkan PRIVATE
     ${TP_DIR}/imgui
 )
 
-add_dependencies(Vulkan SDL3::SDL3-shared IMGUI)
-target_link_libraries(Vulkan PRIVATE SDL3::SDL3-shared IMGUI)
+add_dependencies(Vulkan SDL3::SDL3-shared IMGUI STB)
+target_link_libraries(Vulkan PRIVATE SDL3::SDL3-shared IMGUI STB)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(Vulkan PRIVATE VK_DEBUG)

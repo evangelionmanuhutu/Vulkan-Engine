@@ -15,6 +15,11 @@ GraphicsPipeline::GraphicsPipeline()
 void GraphicsPipeline::destroy()
 {
     auto device = VulkanContext::get()->get_device();
+
+    for (const auto layout : m_DescriptorSetLayouts)
+    {
+        vkDestroyDescriptorSetLayout(device, layout, VK_NULL_HANDLE);
+    }
     
     if (m_Handle != VK_NULL_HANDLE)
     {
@@ -36,18 +41,58 @@ GraphicsPipeline::~GraphicsPipeline()
     ASSERT(m_Handle == VK_NULL_HANDLE, "Forgeting to call destroy()");
 }
 
-GraphicsPipeline &GraphicsPipeline::add_shader(const Ref<Shader> &shader)
+GraphicsPipeline &GraphicsPipeline::set_shaders(const std::vector<Ref<Shader>> &shaders)
 {
-    m_Shaders.push_back(shader);
+    auto const device = VulkanContext::get()->get_device();
+
+    m_Shaders = shaders;
+
+    // Merge descriptor set layouts from both shaders
+    Shader::SetMap merged_sets = Shader::get_merge_sets(shaders);
+    auto push_ranges = Shader::get_push_constants(shaders);
+
+    // Create VkDescriptorSetLayout(s)
+    std::vector<std::pair<u32, VkDescriptorSetLayout>> set_layout_pairs;
+    set_layout_pairs.reserve(merged_sets.size());
+    for (auto& [set_index, bindings] : merged_sets)
+    {
+        VkDescriptorSetLayoutCreateInfo set_info { };
+        set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        set_info.bindingCount = static_cast<u32>(bindings.size());
+        set_info.pBindings = bindings.data();
+        VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+        const VkResult res = vkCreateDescriptorSetLayout(device, &set_info, nullptr, &set_layout);
+        VK_ERROR_CHECK(res, "[Vulkan] Failed to create descriptor set layout");
+        set_layout_pairs.emplace_back(set_index, set_layout);
+    }
+
+    std::ranges::sort(set_layout_pairs, [](auto& a, auto& b){ return a.first < b.first; });
+
+    m_DescriptorSetLayouts.clear();
+    m_DescriptorSetLayouts.reserve(set_layout_pairs.size());
+    for (auto& p : set_layout_pairs)
+    {
+        m_DescriptorSetLayouts.push_back(p.second);
+    }
+
+    VkPipelineLayoutCreateInfo layout_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = static_cast<u32>(m_DescriptorSetLayouts.size()),
+        .pSetLayouts = m_DescriptorSetLayouts.empty() ? nullptr : m_DescriptorSetLayouts.data(),
+        .pushConstantRangeCount = static_cast<u32>(push_ranges.size()),
+        .pPushConstantRanges = push_ranges.empty() ? nullptr : push_ranges.data(),
+    };
+
+    // create pipeline layout
+    VkResult result = vkCreatePipelineLayout(device, &layout_create_info, VK_NULL_HANDLE, &m_Layout);
+    VK_ERROR_CHECK(result, "[Vulkan] Failed to create pipeline layout");
+
     return *this;
 }
 
 void GraphicsPipeline::build(const GraphicsPipelineInfo& info)
 {
     auto device = VulkanContext::get()->get_device();
-
-    // Store the pipeline layout
-    m_Layout = info.layout;
 
     VkPipelineRasterizationStateCreateInfo rasterization_info = {};
     rasterization_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -134,7 +179,7 @@ void GraphicsPipeline::build(const GraphicsPipelineInfo& info)
         .pMultisampleState = &multisample_info,
         .pColorBlendState = &color_blend_info,
         .pDynamicState = &dynamic_state_create_info,
-        .layout = info.layout,
+        .layout = m_Layout,
         .renderPass = info.render_pass,
         .subpass = 0,
         .basePipelineHandle = VK_NULL_HANDLE,

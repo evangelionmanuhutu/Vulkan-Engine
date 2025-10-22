@@ -1,4 +1,5 @@
-// Copyright (c) 2024, Evangelion Manuhutu
+// Copyright (c) 2025, Evangelion Manuhutu
+
 #ifndef APPLICATION_HPP
 #define APPLICATION_HPP
 
@@ -6,7 +7,6 @@
 #include "camera.hpp"
 
 #include <memory>
-#include <vector>
 
 class VulkanContext;
 class CommandBuffer;
@@ -15,6 +15,7 @@ class VertexBuffer;
 class IndexBuffer;
 class UniformBuffer;
 class Shader;
+class Texture2D;
 
 struct UniformBufferData
 {
@@ -30,7 +31,7 @@ public:
     void run();
 
 private:
-    void on_update(double delta_time);
+    void on_update(float delta_time);
 
     void on_window_resize(uint32_t width, uint32_t height);
     void on_framebuffer_resize(uint32_t width, uint32_t height);
@@ -47,14 +48,15 @@ private:
     Ref<VertexBuffer> m_VertexBuffer;
     Ref<IndexBuffer> m_IndexBuffer;
     Ref<UniformBuffer> m_UniformBuffer;
-    UniformBufferData m_UboData;
-
-    std::vector<VkDescriptorSetLayout> m_DescLayouts;
+    Ref<Texture2D> m_Texture;
     Ref<CommandBuffer> m_CommandBuffer;
-    Camera m_Camera;
     Scope<Window> m_Window;
+
+    UniformBufferData m_UboData;
+    VkDescriptorSet m_DescriptorSet;
+    Camera m_Camera;
     VulkanContext *m_Vk;
-    glm::vec4 m_ClearColor = glm::vec4(1.0f);
+    glm::vec4 m_ClearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f);
 };
 
-#endif //APPLICATION_H
+#endif //APPLICATION_HPP

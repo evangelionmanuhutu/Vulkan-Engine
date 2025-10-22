@@ -39,7 +39,7 @@ public:
     VulkanBuffer(const void *data, VkDeviceSize size, VkBufferUsageFlags usage);
     virtual ~VulkanBuffer() {};
 
-    void bind_memory(VkDeviceSize offset = 0);
+    void bind_memory(VkDeviceSize offset = 0) const;
     
     virtual void set_data(const void *data, VkDeviceSize size, VkDeviceSize offset = 0);
     VkDeviceMemory get_buffer_memory() const { return m_Memory; }
@@ -58,7 +58,7 @@ protected:
 class VertexBuffer : public VulkanBuffer
 {
 public:
-    VertexBuffer(void *data, VkDeviceSize size);
+    VertexBuffer(const void *data, VkDeviceSize size);
     ~VertexBuffer() override;
     static Ref<VertexBuffer> create(void *data, VkDeviceSize size);
 };
@@ -78,18 +78,13 @@ private:
 class UniformBuffer : public VulkanBuffer
 {
 public:
-    UniformBuffer(VkDeviceSize size, uint32_t binding_location);
+    UniformBuffer(VkDeviceSize size);
     ~UniformBuffer() override;
     
-    static Ref<UniformBuffer> create(VkDeviceSize size, uint32_t binding_location);
-
-    void create_descriptor_set(VkDescriptorSetLayout *layouts);
-    VkDescriptorSet get_descriptor_set() { return m_DescriptorSet; }
+    static Ref<UniformBuffer> create(VkDeviceSize size);
 
     void destroy() override;
 private:
-    VkDescriptorSet m_DescriptorSet;
-    uint32_t m_BindingLocation;
 };
 
 #endif

@@ -8,20 +8,18 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-#include <algorithm>
-#include <cstddef>
-#include <thread>
-#include <unordered_map>
-
-#include "logger.hpp"
-
 #include "vulkan/buffers.hpp"
 #include "vulkan/command_buffer.hpp"
 #include "vulkan/graphics_pipeline.hpp"
 #include "vulkan/shader.hpp"
+#include "vulkan/texture.hpp"
 
 #include "vulkan/vulkan_context.hpp"
 #include "vulkan/vulkan_wrapper.hpp"
+
+#include <vector>
+#include <cstddef>
+#include <thread>
 
 Application::Application(i32 argc, char **argv)
 {
@@ -38,10 +36,11 @@ Application::Application(i32 argc, char **argv)
 
     m_CommandBuffer = CommandBuffer::create();
 
-    glm::vec2 size = { static_cast<float>(m_Window->get_window_width()), static_cast<float>(m_Window->get_window_height())};
-
+    const glm::vec2 size = { static_cast<float>(m_Window->get_window_width()), static_cast<float>(m_Window->get_window_height())};
     m_Camera = Camera(45.0f, size.x, size.y);
     m_Camera.set_position(glm::vec3(0.0f, 0.0f, 5.0f)).update_view_matrix();
+
+    m_Texture = Texture2D::create("res/textures/brick.jpg");
 
     create_graphics_pipeline();
 }
@@ -50,6 +49,11 @@ Application::~Application()
 {
     const VkDevice device = m_Vk->get_device();
     m_Vk->get_queue()->wait_idle();
+
+    if (m_Texture)
+    {
+        m_Texture->destroy();
+    }
 
     if (m_Pipeline)
     {
@@ -69,11 +73,6 @@ Application::~Application()
     if (m_UniformBuffer)
     {
         m_UniformBuffer->destroy();
-    }
-
-    for (auto layout : m_DescLayouts)
-    {
-        vkDestroyDescriptorSetLayout(device, layout, VK_NULL_HANDLE);
     }
 
     if (m_CommandBuffer)
@@ -109,8 +108,8 @@ void Application::run()
         }
     });
 
-    Uint64 prevCounter = SDL_GetPerformanceCounter();
-    double freq = static_cast<double>(SDL_GetPerformanceFrequency());
+    Uint64 prev_counter = SDL_GetPerformanceCounter();
+    float freq = static_cast<float>(SDL_GetPerformanceFrequency());
     float title_update_interval = 0.0f;
 
     SDL_Event event;
@@ -124,18 +123,18 @@ void Application::run()
             m_Window->poll_events(&event);            
         }
 
-        Uint64 currCounter = SDL_GetPerformanceCounter();
-        double delta_time = static_cast<double>(currCounter - prevCounter) / freq;
-        prevCounter = currCounter;
+        const Uint64 current_count = SDL_GetPerformanceCounter();
+        const float delta_time = static_cast<float>(current_count - prev_counter) / freq;
+        prev_counter = current_count;
 
-        title_update_interval -= static_cast<float>(delta_time);
-        if (title_update_interval <= 0.0f)
+        title_update_interval -= delta_time;
+        if (title_update_interval <= 0.0f && delta_time > 0.0f)
         {
-            double fps = delta_time > 0.0 ? 1.0 / delta_time : 0.0;
-            double ms = delta_time * 1000.0;
-            m_Window->set_title(std::format("Vulkan Engine | {:.1f} FPS | {:.6f}ms", fps, ms));
-            // SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "FPS %.1f | %.6f MS", fps, ms);
-            title_update_interval = 2.0f;
+            const int fps = static_cast<int>(1.0f / delta_time);
+            // m_Window->set_title();
+            // SDL_Log("%d FPS - %.2f ms", fps, delta_time * 1000.0f);// std::format("Vulkan Engine - {} FPS - {} ms", fps, delta_time).c_str();
+
+            title_update_interval = 0.3f;
         }
         
         on_update(delta_time);
@@ -144,14 +143,19 @@ void Application::run()
     render_thread.join();
 }
 
-void Application::on_update(double delta_time)
+void Application::on_update(float delta_time)
 {
     m_Camera.update_view_matrix();
 
     static float y_rot = 0.0f;
     y_rot += delta_time;
 
-    m_UboData.transform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f)) * glm::rotate(glm::mat4(1.0f), y_rot, glm::vec3(0.0f, 1.0f, 0.0f));
+    m_UboData.transform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f))
+        * glm::rotate(glm::mat4(1.0f), glm::radians(y_rot * 40.0f), glm::vec3(1.0f, 0.0f, 0.0f))
+        * glm::rotate(glm::mat4(1.0f), glm::radians(y_rot * 25.0f), glm::vec3(0.0f, 1.0f, 0.0f))
+        * glm::rotate(glm::mat4(1.0f), glm::radians(y_rot * 14.0f), glm::vec3(0.0f, 0.0f, 1.0f))
+        * glm::scale(glm::mat4(1.0f), glm::vec3((glm::sin(y_rot) + 1.0f) * 0.1f) + glm::vec3(1.0f));
+
     m_UboData.viewProjection = m_Camera.get_view_projection_matrix();
 }
 
@@ -161,38 +165,25 @@ void Application::on_window_resize(uint32_t width, uint32_t height)
 
 void Application::on_framebuffer_resize(uint32_t width, uint32_t height)
 {
-    const float w = static_cast<float>(width);
-    const float h = static_cast<float>(height);
+    const auto w = static_cast<float>(width);
+    const auto h = static_cast<float>(height);
     m_Camera.resize({w, h}).update_projection_matrix();
 }
 
 void Application::create_graphics_pipeline()
 {
-    const VkDevice device = m_Vk->get_device();
-
-    for (auto layout : m_DescLayouts)
-    {
-        vkDestroyDescriptorSetLayout(device, layout, nullptr);
-    }
-    
-    m_DescLayouts.clear();
+    auto const device = m_Vk->get_device();
 
     const Ref<Shader> vertex_shader = CreateRef<Shader>("res/shaders/default.vert", VK_SHADER_STAGE_VERTEX_BIT);
     const Ref<Shader> fragment_shader = CreateRef<Shader>("res/shaders/default.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
 
-    if (m_UniformBuffer)
-    {
-        m_UniformBuffer->destroy();
-    }
-    m_UniformBuffer = UniformBuffer::create(sizeof(UniformBufferData), 0);
-
     std::vector<Vertex> vertices =
     {
         // Position, Color (clockwise winding)
-        {{ -0.5f, -0.5f, 0.0f }, {0.0f, 0.0f, 1.0f}},
-        {{ -0.5f,  0.5f, 0.0f }, {1.0f, 0.0f, 0.0f}},
-        {{  0.5f,  0.5f, 0.0f }, {0.0f, 1.0f, 0.0f}},
-        {{  0.5f, -0.5f, 0.0f }, {0.0f, 1.0f, 0.0f}}
+        {{ -0.5f, -0.5f, 0.0f }, {1.0f, 1.0f, 1.0f}, { 0.0f, 0.0f }},
+        {{ -0.5f,  0.5f, 0.0f }, {1.0f, 1.0f, 1.0f}, { 0.0f, 1.0f }},
+        {{  0.5f,  0.5f, 0.0f }, {1.0f, 1.0f, 1.0f}, { 1.0f, 1.0f }},
+        {{  0.5f, -0.5f, 0.0f }, {1.0f, 1.0f, 1.0f}, { 1.0f, 0.0f }},
     };
 
     std::vector<uint32_t> indices = 
@@ -209,135 +200,78 @@ void Application::create_graphics_pipeline()
     VkVertexInputBindingDescription binding_desc = {};
     std::vector<VkVertexInputAttributeDescription> attr_desc;
     const auto& reflected_attrs = vertex_shader->get_vertex_attributes();
-    if (!reflected_attrs.empty())
-    {
-        binding_desc.binding = 0;
-        binding_desc.stride = vertex_shader->get_vertex_stride();
-        binding_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        attr_desc = reflected_attrs; // copy
-    }
-    else
-    {
-        binding_desc.binding = 0;
-        binding_desc.stride = sizeof(Vertex);
-        binding_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    ASSERT(reflected_attrs.size() <= 255, "Too many vertex attributes");
+    ASSERT(reflected_attrs.empty() == false, "Attributes are empty");
+    binding_desc.binding = 0;
+    binding_desc.stride = vertex_shader->get_vertex_stride();
+    binding_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    attr_desc = reflected_attrs; // copy
 
-        attr_desc.resize(2);
-        attr_desc[0].binding = 0;
-        attr_desc[0].location = 0;
-        attr_desc[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attr_desc[0].offset = offsetof(Vertex, position);
-        attr_desc[1].binding = 0;
-        attr_desc[1].location = 1;
-        attr_desc[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attr_desc[1].offset = offsetof(Vertex, color);
-    }
-
-    // Merge descriptor set layouts from both shaders
-    std::unordered_map<u32, std::vector<VkDescriptorSetLayoutBinding>> merged_sets;
-    auto merge_sets = [&merged_sets]
-        (const std::unordered_map<u32, std::vector<VkDescriptorSetLayoutBinding>>& src)
-    {
-        for (const auto& [set, bindings] : src)
-        {
-            auto& dst_vec = merged_sets[set];
-            for (const auto& b : bindings)
-            {
-                bool merged = false;
-                for (auto& existing : dst_vec)
-                {
-                    if (existing.binding == b.binding && existing.descriptorType == b.descriptorType)
-                    {
-                        existing.stageFlags |= b.stageFlags; // merge stage flags
-                        merged = true;
-                        break;
-                    }
-                }
-                if (!merged)
-                {
-                    dst_vec.push_back(b);
-                }
-            }
-        }
-    };
-
-    merge_sets(vertex_shader->get_descriptor_set_layout_bindings());
-    merge_sets(fragment_shader->get_descriptor_set_layout_bindings());
-
-    // Create VkDescriptorSetLayout(s)
-    std::vector<std::pair<u32, VkDescriptorSetLayout>> set_layout_pairs;
-    set_layout_pairs.reserve(merged_sets.size());
-    for (auto& [set_index, bindings] : merged_sets)
-    {
-        VkDescriptorSetLayoutCreateInfo set_info { };
-        set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        set_info.bindingCount = static_cast<u32>(bindings.size());
-        set_info.pBindings = bindings.data();
-        VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
-        VkResult res = vkCreateDescriptorSetLayout(device, &set_info, nullptr, &set_layout);
-        VK_ERROR_CHECK(res, "[Vulkan] Failed to create descriptor set layout");
-        set_layout_pairs.emplace_back(set_index, set_layout);
-    }
-    std::sort(set_layout_pairs.begin(), set_layout_pairs.end(), [](auto& a, auto& b){ return a.first < b.first; });
-
-    std::vector<VkDescriptorSetLayout> set_layouts;
-    set_layouts.reserve(set_layout_pairs.size());
-    m_DescLayouts.clear();
-    for (auto& p : set_layout_pairs)
-    {
-        set_layouts.push_back(p.second);
-        m_DescLayouts.push_back(p.second);
-    }
-
-    // Merge push constant ranges
-    std::vector<VkPushConstantRange> push_ranges = vertex_shader->get_push_constant_ranges();
-    for (const auto& pr : fragment_shader->get_push_constant_ranges())
-    {
-        bool merged = false;
-        for (auto& ex : push_ranges)
-        {
-            if (ex.offset == pr.offset && ex.size == pr.size)
-            {
-                ex.stageFlags |= pr.stageFlags;
-                merged = true;
-                break;
-            }
-        }
-        if (!merged)
-            push_ranges.push_back(pr);
-    }
-
-    VkPipelineLayoutCreateInfo layout_create_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = static_cast<u32>(set_layouts.size()),
-        .pSetLayouts = set_layouts.empty() ? nullptr : set_layouts.data(),
-        .pushConstantRangeCount = static_cast<u32>(push_ranges.size()),
-        .pPushConstantRanges = push_ranges.empty() ? nullptr : push_ranges.data(),
-    };
-
-    // create pipeline layout
-    VkPipelineLayout pipeline_layout;
-    VkResult result = vkCreatePipelineLayout(device, &layout_create_info, VK_NULL_HANDLE, &pipeline_layout);
-    VK_ERROR_CHECK(result, "[Vulkan] Failed to create pipeline layout");
-
-    GraphicsPipelineInfo pipeline_info {
-        .binding_description = binding_desc,
-        .attribute_descriptions = attr_desc,  // This copies the vector
-        .layout = pipeline_layout,
-        .extent = VulkanContext::get()->get_swap_chain()->get_extent(),
-        .render_pass = m_Vk->get_render_pass(),
-    };
+    GraphicsPipelineInfo pipeline_info = {};
+    pipeline_info.binding_description = binding_desc;
+    pipeline_info.attribute_descriptions = attr_desc;  // This copies the vector
+    pipeline_info.extent = VulkanContext::get()->get_swap_chain()->get_extent();
+    pipeline_info.render_pass = m_Vk->get_render_pass();
 
     m_Pipeline = CreateRef<GraphicsPipeline>();
-    m_Pipeline->add_shader(vertex_shader)
-        .add_shader(fragment_shader)
+    m_Pipeline->set_shaders({vertex_shader, fragment_shader})
         .build(pipeline_info);
 
-    m_UniformBuffer->create_descriptor_set(&m_DescLayouts.front());
+    m_UniformBuffer = UniformBuffer::create(sizeof(UniformBufferData));
+    m_UniformBuffer->bind_memory();
+
+    auto descriptor_layouts = m_Pipeline->get_descriptor_set_layouts();
+
+    VkDescriptorPool descriptor_pool = VulkanContext::get()->get_descriptor_pool();
+    VkDescriptorSetAllocateInfo descriptor_alloc_info = {};
+    descriptor_alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    descriptor_alloc_info.descriptorPool = descriptor_pool;
+    descriptor_alloc_info.descriptorSetCount = static_cast<uint32_t>(descriptor_layouts.size());
+    descriptor_alloc_info.pSetLayouts = descriptor_layouts.data();
+
+    VkResult result = vkAllocateDescriptorSets(device, &descriptor_alloc_info, &m_DescriptorSet);
+    VK_ERROR_CHECK(result, "[Vulkan] Failed to allocate descriptor set");
+
+    // Uniform buffer info
+    VkDescriptorBufferInfo ubo_info = {};
+    ubo_info.buffer = m_UniformBuffer->get_buffer();
+    ubo_info.offset = 0;
+    ubo_info.range = sizeof(UniformBufferData);
+
+    VkWriteDescriptorSet ubo_write = {};
+    ubo_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    ubo_write.pNext = VK_NULL_HANDLE;
+    ubo_write.dstSet = m_DescriptorSet;
+    ubo_write.dstBinding = 0;
+    ubo_write.dstArrayElement = 0;
+    ubo_write.descriptorCount = 1;
+    ubo_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    ubo_write.pBufferInfo = &ubo_info;
+
+    // Image Info
+    VkDescriptorImageInfo image_info = {};
+    image_info.sampler = m_Texture->get_sampler(),
+    image_info.imageView = m_Texture->get_image_view(),
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet image_write = {};
+    image_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    image_write.pNext = VK_NULL_HANDLE;
+    image_write.dstSet = m_DescriptorSet;
+    image_write.dstBinding = 1;
+    image_write.dstArrayElement = 0;
+    image_write.descriptorCount = 1;
+    image_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    image_write.pImageInfo = &image_info;
+
+    std::vector writes = {ubo_write, image_write};
+    vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()),
+        writes.data(), 0, nullptr);
 }
 
 void Application::record_frame(VkFramebuffer framebuffer, uint32_t frame_index)
 {
+    auto const device = m_Vk->get_device();
     const VkExtent2D extent = m_Vk->get_swap_chain()->get_extent();
 
     VkViewport viewport{};
@@ -374,7 +308,7 @@ void Application::record_frame(VkFramebuffer framebuffer, uint32_t frame_index)
     state.scissor = scissor;
     state.viewport = viewport;
     state.clear_value = clear_value;
-    state.descriptor_sets = { m_UniformBuffer->get_descriptor_set() };
+    state.descriptor_sets = { m_DescriptorSet };
     state.index_buffer = { m_IndexBuffer->get_buffer(), 0, VK_INDEX_TYPE_UINT32 };
     state.vertex_buffers = { m_VertexBuffer->get_buffer() };
     
@@ -450,9 +384,6 @@ void Application::imgui_begin()
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::SetNextWindowViewport(viewport->ID);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PopStyleVar(2);
 
     if (doc_space_flags & ImGuiDockNodeFlags_PassthruCentralNode)
     {

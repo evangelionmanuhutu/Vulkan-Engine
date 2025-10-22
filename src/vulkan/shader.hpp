@@ -12,6 +12,7 @@
 
 #include <spirv_cross/spirv_cross.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
+#include <spirv_cross/spirv_hlsl.hpp>
 #include <shaderc/shaderc.hpp>
 
 #include <vulkan/vulkan.h>
@@ -56,13 +57,19 @@ static VkFormat map_spirv_type_to_vk_format(const spirv_cross::SPIRType& type)
 }
 
 
+
 class Shader {
 public:
+    using SetMap = std::unordered_map<uint32_t, std::vector<VkDescriptorSetLayoutBinding>>;
+
     Shader(const std::filesystem::path& filepath, VkShaderStageFlagBits stage);
     ~Shader();
 
-    const VkPipelineShaderStageCreateInfo &get_stage() { return m_StageCreateInfo; }
+    const VkPipelineShaderStageCreateInfo &get_stage() const { return m_StageCreateInfo; }
     VkShaderModule get_module() const { return m_Module; }
+
+    static SetMap get_merge_sets(const std::vector<Ref<Shader>> &shaders);
+    static std::vector<VkPushConstantRange> get_push_constants(const std::vector<Ref<Shader>> &shaders);
 
     // Reflection getters
     // Vertex input (only meaningful for vertex stage)

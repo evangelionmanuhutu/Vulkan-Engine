@@ -14,7 +14,6 @@ struct GraphicsPipelineInfo
     // Store actual data, not pointers
     VkVertexInputBindingDescription binding_description;
     std::vector<VkVertexInputAttributeDescription> attribute_descriptions;
-    VkPipelineLayout layout;
     VkExtent2D extent;
     VkRenderPass render_pass;
 
@@ -44,17 +43,19 @@ public:
     GraphicsPipeline();
     ~GraphicsPipeline();
 
-    GraphicsPipeline &add_shader(const Ref<Shader> &shader);
+    GraphicsPipeline &set_shaders(const std::vector<Ref<Shader>> &shaders);
     void build(const GraphicsPipelineInfo &info);
 
     void destroy();
 
+    const std::vector<VkDescriptorSetLayout> &get_descriptor_set_layouts() const { return m_DescriptorSetLayouts; }
     VkPipeline get_handle() const { return m_Handle; }
     VkPipelineLayout get_layout() const { return m_Layout; }
 
 private:
     VkPipeline m_Handle;
     VkPipelineLayout m_Layout;
+    std::vector<VkDescriptorSetLayout> m_DescriptorSetLayouts;
     std::vector<Ref<Shader>> m_Shaders;
 };
 

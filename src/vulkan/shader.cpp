@@ -102,6 +102,66 @@ Shader::~Shader()
     m_Module = VK_NULL_HANDLE;
 }
 
+Shader::SetMap Shader::get_merge_sets(
+    const std::vector<Ref<Shader>>& shaders)
+{
+    Shader::SetMap merged_sets;
+
+    for (const auto& shader : shaders)
+    {
+        for (const auto& [set, bindings] : shader->get_descriptor_set_layout_bindings())
+        {
+            auto& dst_vec = merged_sets[set];
+            for (const auto& b : bindings)
+            {
+                bool merged = false;
+                for (auto& existing : dst_vec)
+                {
+                    if (existing.binding == b.binding && existing.descriptorType == b.descriptorType)
+                    {
+                        existing.stageFlags |= b.stageFlags; // merge stage flags
+                        merged = true;
+                        break;
+                    }
+                }
+                if (!merged)
+                {
+                    dst_vec.push_back(b);
+                }
+            }
+        }
+    }
+
+    return merged_sets;
+}
+
+std::vector<VkPushConstantRange> Shader::get_push_constants(const std::vector<Ref<Shader>>& shaders)
+{
+    // Merge push constant ranges
+    std::vector<VkPushConstantRange> push_ranges;
+    for (const auto &shader : shaders)
+    {
+        for (const auto& pr : shader->get_push_constant_ranges())
+        {
+            bool merged = false;
+            for (auto& ex : push_ranges)
+            {
+                if (ex.offset == pr.offset && ex.size == pr.size)
+                {
+                    ex.stageFlags |= pr.stageFlags;
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged)
+            {
+                push_ranges.push_back(pr);
+            }
+        }
+    }
+    return push_ranges;
+}
+
 std::string Shader::read_file(const std::filesystem::path& file_path)
 {
     std::string result;
@@ -133,7 +193,6 @@ std::vector<u32> Shader::compile_or_get_vulkan_binaries(const std::string& shade
 {
     std::vector<u32> code;
     shaderc::CompileOptions options;
-
     std::filesystem::path cached_directory = get_cached_directory();
 
     options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);

@@ -38,6 +38,7 @@ elseif (UNIX AND NOT APPLE)
 endif()
 
 include(third_party/cmakefiles/imgui.cmake)
+include(third_party/cmakefiles/stb.cmake)
 
 set(BUILD_SHARED_LIBS)
 set(SDL_EXAMPLES OFF)
